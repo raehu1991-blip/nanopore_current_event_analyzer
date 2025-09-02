@@ -36,8 +36,9 @@ python run.py
 ### 模块1：单事件分析 (Single Event Analysis)
 
 #### 功能特点
-- 支持TDMS和NPZ文件加载
-- tdms的采样频率是250khz
+- 支持TDMS、NPZ和BIN文件加载
+- 所有文件格式的采样频率都是250kHz
+- BIN文件的电流自动从安培(A)转换为纳安(nA)显示
 - 横坐标是时间，纵坐标是电流
 - 交互式图表显示（可缩放、平移）
 - 阈值分析和峰值检测
@@ -45,10 +46,10 @@ python run.py
 - 背景颜色自定义
 
 #### 使用说明
-1. 点击"Load TDMS/NPZ File Folder"加载数据文件夹
+1. 点击"Load TDMS/NPZ/BIN File Folder"加载数据文件夹
 2. 使用Previous/Next按钮浏览不同文件
-3. 设置threshold值（默认-0.1），定义峰值检测范围
-4. 调整分析参数：prominence（默认0.08）、height（默认0.05）和背景颜色
+3. 设置threshold值（相对于基线的正值，默认0.1），实际阈值 = 基线 - 相对阈值
+4. 调整分析参数：prominence（默认0.08）和背景颜色
 5. 点击"Analyze"进行峰值分析
 6. 在"峰值审核"中选择要保存的峰值
 7. 点击"Export Selected to CSV"导出选中的峰值数据

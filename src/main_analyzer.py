@@ -37,6 +37,7 @@ class SingleEventAnalyzer(QWidget):
         self.file_list = []
         self.current_file_index = 0
         self.peaks_data = []
+        self.current_file_type = None  # 跟踪当前文件类型以确定单位
         
         self.initUI()
         
@@ -56,7 +57,7 @@ class SingleEventAnalyzer(QWidget):
         file_group = QGroupBox("文件加载")
         file_layout = QVBoxLayout()
         
-        self.load_btn = QPushButton("Load TDMS/NPZ File Folder")
+        self.load_btn = QPushButton("Load TDMS/NPZ/BIN File Folder")
         self.load_btn.clicked.connect(self.load_file_folder)
         file_layout.addWidget(self.load_btn)
         
@@ -132,10 +133,10 @@ class SingleEventAnalyzer(QWidget):
         
         # Threshold setting
         thresh_layout = QHBoxLayout()
-        thresh_layout.addWidget(QLabel("阈值 (Threshold):"))
+        thresh_layout.addWidget(QLabel("阈值 (相对于基线):"))
         self.threshold_input = QDoubleSpinBox()
-        self.threshold_input.setRange(-10.0, 10.0)
-        self.threshold_input.setValue(-0.1)  # Default as specified
+        self.threshold_input.setRange(0.0, 100.0)  # 正值范围
+        self.threshold_input.setValue(0.1)  # 默认相对阈值
         self.threshold_input.setSingleStep(0.01)
         self.threshold_input.setDecimals(3)
         thresh_layout.addWidget(self.threshold_input)
@@ -151,17 +152,6 @@ class SingleEventAnalyzer(QWidget):
         self.prominence_input.setDecimals(4)
         prominence_layout.addWidget(self.prominence_input)
         param_layout.addLayout(prominence_layout)
-        
-        # Peak detection height parameter (保留height参数但调整范围)
-        height_layout = QHBoxLayout()
-        height_layout.addWidget(QLabel("Height:"))
-        self.height_input = QDoubleSpinBox()
-        self.height_input.setRange(0.0, 1.0)  # 调整范围使其更实用
-        self.height_input.setValue(0.05)  # 调整默认值
-        self.height_input.setSingleStep(0.01)
-        self.height_input.setDecimals(3)
-        height_layout.addWidget(self.height_input)
-        param_layout.addLayout(height_layout)
         
         # Background color selection
         bg_layout = QHBoxLayout()
@@ -245,15 +235,42 @@ class SingleEventAnalyzer(QWidget):
         if color_name in color_map:
             self.plot_widget.setBackground(color_map[color_name])
     
+    def update_current_unit_label(self):
+        """根据文件类型更新电流单位标签"""
+        if self.current_file_type == 'bin':
+            # BIN文件显示为纳安
+            self.plot_widget.setLabel('left', '电流 (nA)', 'nA')
+        else:
+            # TDMS和NPZ文件显示为安培
+            self.plot_widget.setLabel('left', '电流 (A)', 'A')
+    
+    def get_current_unit(self):
+        """获取当前电流单位"""
+        if self.current_file_type == 'bin':
+            return 'nA'
+        else:
+            return 'A'
+    
+    def calculate_baseline(self):
+        """计算基线值：使用前200个数据点的平均值"""
+        if self.current_data is None or len(self.current_data) == 0:
+            return 0.0
+        
+        # 取前200个点，如果数据不足200个点则取全部
+        baseline_points = min(200, len(self.current_data))
+        baseline_data = self.current_data[:baseline_points]
+        
+        return np.mean(baseline_data)
+    
     def load_file_folder(self):
-        folder_path = QFileDialog.getExistingDirectory(self, "选择包含TDMS/NPZ文件的文件夹")
+        folder_path = QFileDialog.getExistingDirectory(self, "选择包含TDMS/NPZ/BIN文件的文件夹")
         if folder_path:
             self.current_folder = folder_path
             self.file_list = []
             
-            # Find all TDMS and NPZ files
+            # Find all TDMS, NPZ and BIN files
             for file in os.listdir(folder_path):
-                if file.lower().endswith(('.tdms', '.npz')):
+                if file.lower().endswith(('.tdms', '.npz', '.bin')):
                     self.file_list.append(os.path.join(folder_path, file))
             
             if self.file_list:
@@ -263,7 +280,7 @@ class SingleEventAnalyzer(QWidget):
                 self.prev_btn.setEnabled(len(self.file_list) > 1)
                 self.next_btn.setEnabled(len(self.file_list) > 1)
             else:
-                QMessageBox.warning(self, "警告", "所选文件夹中未找到TDMS或NPZ文件。")
+                QMessageBox.warning(self, "警告", "所选文件夹中未找到TDMS、NPZ或BIN文件。")
     
     def load_current_file(self):
         if not self.file_list:
@@ -274,9 +291,14 @@ class SingleEventAnalyzer(QWidget):
         
         try:
             if file_path.lower().endswith('.tdms'):
+                self.current_file_type = 'tdms'
                 self.load_tdms_file(file_path)
             elif file_path.lower().endswith('.npz'):
+                self.current_file_type = 'npz'
                 self.load_npz_file(file_path)
+            elif file_path.lower().endswith('.bin'):
+                self.current_file_type = 'bin'
+                self.load_bin_file(file_path)
                 
             self.file_info_label.setText(f"文件 {self.current_file_index + 1}/{len(self.file_list)}: {file_name}")
             self.plot_data()
@@ -324,6 +346,34 @@ class SingleEventAnalyzer(QWidget):
         self.current_data = data['current']
         self.time_data = data['time']
     
+    def load_bin_file(self, file_path):
+        """加载二进制文件，假设采样频率为250kHz，将电流从A转换为nA"""
+        try:
+            # 尝试以double（8字节）格式读取二进制数据
+            try:
+                raw_current_data = np.fromfile(file_path, dtype=np.float64)
+            except:
+                # 如果失败，尝试以float（4字节）格式读取
+                try:
+                    raw_current_data = np.fromfile(file_path, dtype=np.float32)
+                except:
+                    # 最后尝试以16位整数格式读取
+                    raw_data = np.fromfile(file_path, dtype=np.int16)
+                    # 转换为浮点数，假设数据需要归一化
+                    raw_current_data = raw_data.astype(np.float64)
+            
+            if len(raw_current_data) == 0:
+                raise ValueError("BIN文件为空或格式不支持")
+            
+            # 将电流从安培(A)转换为纳安(nA): 1 A = 1e9 nA
+            self.current_data = raw_current_data * 1e9
+            
+            # 使用250kHz采样频率生成时间数组
+            self.time_data = np.arange(len(self.current_data)) / self.sample_rate
+            
+        except Exception as e:
+            raise ValueError(f"加载BIN文件失败: {str(e)}")
+    
     def load_previous_file(self):
         if self.current_file_index > 0:
             self.current_file_index -= 1
@@ -342,24 +392,34 @@ class SingleEventAnalyzer(QWidget):
         self.plot_widget.addItem(self.crosshair_v, ignoreBounds=True)
         self.plot_widget.addItem(self.crosshair_h, ignoreBounds=True)
         
+        # 更新电流单位标签
+        self.update_current_unit_label()
+        
         # Plot the current data
         self.plot_widget.plot(self.time_data, self.current_data, pen='b', name='电流')
         
-        # Add threshold line
-        threshold = self.threshold_input.value()
-        threshold_line = pg.InfiniteLine(pos=threshold, angle=0, pen=pg.mkPen('r', style=Qt.DashLine))
+        # Add threshold line (actual threshold = baseline - relative threshold)
+        baseline = self.calculate_baseline()
+        relative_threshold = self.threshold_input.value()
+        actual_threshold = baseline - relative_threshold
+        threshold_line = pg.InfiniteLine(pos=actual_threshold, angle=0, pen=pg.mkPen(color=(255, 0, 0), style=Qt.DashLine))
         self.plot_widget.addItem(threshold_line)
     
     def analyze_data(self):
         if self.current_data is None or self.time_data is None:
             return
         
-        threshold = self.threshold_input.value()
-        height = self.height_input.value()
+        # 计算基线值（前200个点的平均值）
+        baseline = self.calculate_baseline()
+        
+        # 用户输入的是相对阈值（正值），实际阈值 = 基线 - 相对阈值
+        relative_threshold = self.threshold_input.value()
+        actual_threshold = baseline - relative_threshold
+        
         prominence = self.prominence_input.value()
         
-        # Find data points below threshold
-        below_threshold_mask = self.current_data < threshold
+        # Find data points below actual threshold
+        below_threshold_mask = self.current_data < actual_threshold
         below_threshold_indices = np.where(below_threshold_mask)[0]
         
         if len(below_threshold_indices) == 0:
@@ -371,9 +431,8 @@ class SingleEventAnalyzer(QWidget):
         below_threshold_time = self.time_data[below_threshold_indices]
         
         # Use find_peaks with prominence for better peak control
-        # prominence控制峰的显著性，height控制最小峰高度
+        # prominence控制峰的显著性
         peaks, properties = find_peaks(-self.current_data, 
-                                     height=height, 
                                      prominence=prominence,
                                      wlen=40,
                                      distance=10)
@@ -385,7 +444,7 @@ class SingleEventAnalyzer(QWidget):
         threshold_right_bases = []
         
         for i, peak in enumerate(peaks):
-            if self.current_data[peak] < threshold:
+            if self.current_data[peak] < actual_threshold:
                 threshold_peaks.append(peak)
                 # 直接从properties中获取对应的prominence值
                 if 'prominences' in properties and i < len(properties['prominences']):
@@ -520,8 +579,12 @@ class SingleEventAnalyzer(QWidget):
             })
         
         # Display results
+        current_unit = self.get_current_unit()
         results_text = f"分析结果:\n"
         results_text += f"文件: {current_file}\n"
+        results_text += f"基线值: {baseline:.6f}{current_unit}\n"
+        results_text += f"相对阈值: {relative_threshold:.6f}{current_unit}\n"
+        results_text += f"实际阈值: {actual_threshold:.6f}{current_unit}\n"
         results_text += f"找到峰值: {len(peaks)}\n"
         results_text += f"总时间 (低于阈值): {total_time:.6f} s\n"
         results_text += f"Prominence值范围: {prominences.min():.6f} - {prominences.max():.6f}\n"
@@ -530,14 +593,14 @@ class SingleEventAnalyzer(QWidget):
         for i, peak_data in enumerate(self.peaks_data):
             results_text += f"峰值 {i+1}:\n"
             results_text += f"  时间: {peak_data['peak_t']:.6f}s\n"
-            results_text += f"  电流: {peak_data['peak_i']:.6f}A\n"
+            results_text += f"  电流: {peak_data['peak_i']:.6f}{current_unit}\n"
             results_text += f"  起点时间: {peak_data['peak_start_t']:.6f}s\n"
-            results_text += f"  起点电流: {peak_data['peak_start_i']:.6f}A\n"
+            results_text += f"  起点电流: {peak_data['peak_start_i']:.6f}{current_unit}\n"
             results_text += f"  振幅 (Prominence): {peak_data['peak_amplitude']:.6f}\n"
             if peak_data['left_base_t'] is not None:
-                results_text += f"  左基点: {peak_data['left_base_t']:.6f}s, {peak_data['left_base_i']:.6f}A\n"
+                results_text += f"  左基点: {peak_data['left_base_t']:.6f}s, {peak_data['left_base_i']:.6f}{current_unit}\n"
             if peak_data['right_base_t'] is not None:
-                results_text += f"  右基点: {peak_data['right_base_t']:.6f}s, {peak_data['right_base_i']:.6f}A\n"
+                results_text += f"  右基点: {peak_data['right_base_t']:.6f}s, {peak_data['right_base_i']:.6f}{current_unit}\n"
             results_text += f"  相对时间: {peak_data['peak_rel_t']:.6f}\n"
             results_text += f"  相对电流: {peak_data['peak_rel_i']:.6f}\n\n"
         
@@ -555,27 +618,37 @@ class SingleEventAnalyzer(QWidget):
         # Plot peaks on the graph
         self.plot_data()
         
+        # Highlight data points below actual threshold
+        below_threshold_times = self.time_data[below_threshold_indices]
+        below_threshold_currents = self.current_data[below_threshold_indices]
+        if len(below_threshold_times) > 1:
+            # 用橙色线段连接低于阈值的点
+            self.plot_widget.plot(
+                below_threshold_times, 
+                below_threshold_currents,
+                pen=pg.mkPen(color=(255, 165, 0), width=2),
+                name='低于阈值'
+            )
         # Add peak markers
         if len(peak_times) > 0:
             self.plot_widget.plot(peak_times, peak_currents, 
-                                pen=None, symbol='o', symbolBrush='r', symbolSize=8, name='峰值')
+                                pen=None, symbol='o', symbolBrush=(255, 0, 0), symbolSize=8, name='峰值')
             
             # 绘制prominence竖线：从峰值点向上延伸prominence值的长度
             for i, (t, curr, prominence_val) in enumerate(zip(peak_times, peak_currents, prominences)):
                 ymin = curr  # 竖线底部（峰值点）
                 ymax = curr + prominence_val  # 竖线顶部（向上延伸prominence值）
-                print(curr, curr + prominence_val)
                 
                 # 使用pyqtgraph的PlotDataItem绘制竖线
                 prominence_line = self.plot_widget.plot([t, t], [ymin, ymax], 
-                                                      pen=pg.mkPen('orange', width=2), 
+                                                      pen=pg.mkPen(color=(0, 0, 255), width=2), 
                                                       name=f'Prominence_{i+1}' if i == 0 else None)
             
             # Add prominence value labels on the plot
             for i, (t, curr, prominence_val) in enumerate(zip(peak_times, peak_currents, prominences)):
                 # Create text item for prominence value
-                text_item = pg.TextItem(f'P{i+1}:{prominence_val:.3f}', 
-                                      color='red', 
+                text_item = pg.TextItem(f'P{i+1}', 
+                                      color=(255, 0, 0), 
                                       anchor=(0.5, 1.5))
                 text_item.setPos(t, curr)
                 self.plot_widget.addItem(text_item)
@@ -590,11 +663,11 @@ class SingleEventAnalyzer(QWidget):
             
             # 绘制left_bases（左基点）- 使用蓝色三角形
             self.plot_widget.plot(left_base_times, left_base_currents, 
-                                pen=None, symbol='t1', symbolBrush='blue', symbolSize=10, name='左基点')
+                                pen=None, symbol='t1', symbolBrush=(0, 0, 255), symbolSize=10, name='左基点')
             
             # 绘制right_bases（右基点）- 使用紫色三角形
             self.plot_widget.plot(right_base_times, right_base_currents, 
-                                pen=None, symbol='t2', symbolBrush='purple', symbolSize=10, name='右基点')
+                                pen=None, symbol='t2', symbolBrush=(128, 0, 128), symbolSize=10, name='右基点')
             
             # 添加连接线：从左基点到右基点
             for i in range(len(peaks)):
@@ -602,12 +675,7 @@ class SingleEventAnalyzer(QWidget):
                 base_y = min(left_base_currents[i], right_base_currents[i])  # 使用较低的点作为基线
                 self.plot_widget.plot([left_base_times[i], right_base_times[i]], 
                                     [base_y, base_y], 
-                                    pen=pg.mkPen('gray', width=1, style=Qt.DashLine))
-        
-        # Add start point markers (removed as requested)
-        # if len(peak_start_times) > 0:
-        #     self.plot_widget.plot(peak_start_times, peak_start_currents, 
-        #                         pen=None, symbol='t', symbolBrush='g', symbolSize=8, name='起点')
+                                    pen=pg.mkPen(color=(128, 128, 128), width=1, style=Qt.DashLine))
         
         # Enable review and export buttons
         self.select_all_btn.setEnabled(True)
