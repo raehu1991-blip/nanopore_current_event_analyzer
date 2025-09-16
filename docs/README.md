@@ -41,19 +41,24 @@ python run.py
 - BIN文件的电流自动从安培(A)转换为纳安(nA)显示
 - 横坐标是时间，纵坐标是电流
 - 交互式图表显示（可缩放、平移）
-- 阈值分析和峰值检测
+- 阈值分析和峰值检测（支持多种算法：Scipy find_peaks、小波变换、机器学习）
 - 峰值审核和选择性导出
 - 背景颜色自定义
+- 高级峰值检测参数配置
 
 #### 使用说明
 1. 点击"Load TDMS/NPZ/BIN File Folder"加载数据文件夹
 2. 使用Previous/Next按钮浏览不同文件
 3. 设置threshold值（相对于基线的正值，默认0.1），实际阈值 = 基线 - 相对阈值
 4. 调整分析参数：prominence（默认0.08）和背景颜色
-5. 点击"Analyze"进行峰值分析
-6. 在"峰值审核"中选择要保存的峰值
-7. 点击"Export Selected to CSV"导出选中的峰值数据
-8. CSV包含：file_name, peak_number, total_time, peak_t, peak_i, peak_start_i, peak_start_t, peak_amplitude, peak_rel_t, peak_rel_i
+5. 选择峰值检测算法（默认Scipy find_peaks，可选小波变换或机器学习）
+6. 根据所选算法设置相应参数：
+   - **小波变换**：选择小波类型（db4, db6, sym4, coif4, haar）、设置尺度范围（如1-32）、阈值
+   - **机器学习**：可选提供预训练模型路径（.pkl或.joblib文件）
+7. 点击"Analyze"进行峰值分析
+8. 在"峰值审核"中选择要保存的峰值
+9. 点击"Export Selected to CSV"导出选中的峰值数据
+10. CSV包含：file_name, peak_number, total_time, peak_t, peak_i, peak_start_i, peak_start_t, peak_amplitude, peak_rel_t, peak_rel_i
 
 ### 模块2：多文件数据可视化 (Multi-file Data Visualization)
 
@@ -116,7 +121,10 @@ python run.py
 ## 技术实现
 
 ### 核心算法
-- 峰值检测：scipy.find_peaks
+- **峰值检测**：
+  - **Scipy find_peaks**：基于显著性的传统峰值检测
+  - **小波变换 (Wavelet Transform)**：使用PyWavelets进行多尺度分析，对噪声更鲁棒
+  - **机器学习 (Machine Learning)**：使用scikit-learn基于特征分类进行峰值检测
 - 起点检测：从峰值向前寻找上升趋势结束点
 - 统计分析：numpy统计函数
 - 可视化：pyqtgraph
@@ -140,6 +148,10 @@ python run.py
 - Python 3.7+
 - PyQt5 5.15.0+
 - 其他依赖见 requirements.txt
+- **可选依赖**（用于高级峰值检测）：
+  - PyWavelets (pywt)：用于小波变换峰值检测
+  - scikit-learn：用于机器学习峰值检测
+  - joblib：用于模型序列化
 
 ## 贡献指南
 
@@ -154,6 +166,32 @@ python run.py
 本项目采用 MIT 许可证 - 查看 [LICENSE](LICENSE) 文件了解详情
 
 ## 联系方式
+
+## 高级峰值检测算法
+
+### 小波变换峰值检测
+- **原理**：使用连续小波变换在不同尺度上分析信号，检测局部最大值
+- **优势**：对噪声更鲁棒，能检测多尺度特征
+- **参数**：
+  - 小波类型：选择小波基函数（db4, db6, sym4, coif4, haar）
+  - 尺度范围：指定小波尺度范围（如1-32）
+  - 阈值：设置峰值检测的阈值
+
+### 机器学习峰值检测
+- **原理**：使用滑动窗口提取特征（均值、标准差、偏度、峰度等），通过分类器识别峰值
+- **优势**：可适应特定数据模式，支持用户提供预训练模型
+- **参数**：
+  - 模型路径：可选提供预训练的scikit-learn模型文件路径
+  - 默认使用随机森林分类器作为后备方案
+
+## 安装可选依赖
+```bash
+# 安装小波变换支持
+pip install PyWavelets
+
+# 安装机器学习支持
+pip install scikit-learn joblib
+```
 
 如有问题或建议，请提交 Issue 或联系开发者。
 
