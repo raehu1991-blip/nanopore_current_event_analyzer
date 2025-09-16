@@ -1,3 +1,4 @@
+from pickle import FALSE
 import sys
 import os
 import warnings
@@ -54,6 +55,7 @@ class SingleEventAnalyzer(QWidget):
         self.current_file_index = 0
         self.peaks_data = []
         self.current_file_type = None  # 跟踪当前文件类型以确定单位
+        self.labels_edited = False  # 跟踪是否编辑过position labels
         
         self.initUI()
         
@@ -64,7 +66,7 @@ class SingleEventAnalyzer(QWidget):
         
         # Left panel for controls
         left_panel = QWidget()
-        left_panel.setFixedWidth(320)  # Reduced from 350
+        left_panel.setFixedWidth(300)  # Reduced width
         left_layout = QVBoxLayout()
         left_layout.setSpacing(8)  # Reduce spacing between groups
         left_panel.setLayout(left_layout)
@@ -73,7 +75,7 @@ class SingleEventAnalyzer(QWidget):
         file_group = QGroupBox("文件加载")
         file_layout = QVBoxLayout()
         
-        self.load_btn = QPushButton("Load TDMS/NPZ/BIN File Folder")
+        self.load_btn = QPushButton("Load File Folder")
         self.load_btn.clicked.connect(self.load_file_folder)
         file_layout.addWidget(self.load_btn)
         
@@ -107,26 +109,29 @@ class SingleEventAnalyzer(QWidget):
         analysis_group.setLayout(analysis_layout)
         left_layout.addWidget(analysis_group)
         
-        # Export section
-        export_group = QGroupBox("导出结果")
-        export_layout = QVBoxLayout()
-        
-        self.export_btn = QPushButton("Export Selected to CSV")
-        self.export_btn.clicked.connect(self.export_to_csv)
-        self.export_btn.setEnabled(False)
-        export_layout.addWidget(self.export_btn)
-        
-        export_group.setLayout(export_layout)
-        left_layout.addWidget(export_group)
         
         # Peak Review section
         review_group = QGroupBox("峰值审核")
         review_layout = QVBoxLayout()
         
-        # Peak list with checkboxes
-        self.peak_list_widget = QListWidget()
-        self.peak_list_widget.setMaximumHeight(150)
-        review_layout.addWidget(self.peak_list_widget)
+        # Peak table with checkboxes and position labels
+        self.peak_table_widget = QTableWidget()
+        self.peak_table_widget.setMaximumHeight(300)
+        self.peak_table_widget.setColumnCount(6)
+        self.peak_table_widget.setHorizontalHeaderLabels(["选择", "峰值编号","审核状态", "Position Label", "时间 (s)", "Prominence"])
+        
+        # Set column widths
+        self.peak_table_widget.setColumnWidth(0, 50)  # 选择列
+        self.peak_table_widget.setColumnWidth(1, 80)  # 峰值编号
+        self.peak_table_widget.setColumnWidth(2, 80) # 审核状态
+        self.peak_table_widget.setColumnWidth(3, 80) # Position Label
+        self.peak_table_widget.setColumnWidth(4, 80)  # 时间
+        self.peak_table_widget.setColumnWidth(5, 80) # Prominence
+        
+        # Make the table read-only except for position label column
+        self.peak_table_widget.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        
+        review_layout.addWidget(self.peak_table_widget)
         
         # Select all/none buttons
         select_layout = QHBoxLayout()
@@ -140,8 +145,81 @@ class SingleEventAnalyzer(QWidget):
         select_layout.addWidget(self.select_none_btn)
         review_layout.addLayout(select_layout)
         
+        # Review status control buttons
+        status_layout = QHBoxLayout()
+        self.mark_keep_btn = QPushButton("保留")
+        self.mark_delete_btn = QPushButton("删除")
+        self.clear_status_btn = QPushButton("清除状态")
+        self.mark_keep_btn.clicked.connect(self.mark_selected_as_keep)
+        self.mark_delete_btn.clicked.connect(self.mark_selected_as_delete)
+        self.clear_status_btn.clicked.connect(self.clear_selected_status)
+        self.mark_keep_btn.setEnabled(False)
+        self.mark_delete_btn.setEnabled(False)
+        self.clear_status_btn.setEnabled(False)
+        status_layout.addWidget(self.mark_keep_btn)
+        status_layout.addWidget(self.mark_delete_btn)
+        status_layout.addWidget(self.clear_status_btn)
+        review_layout.addLayout(status_layout)
+        
+        # Position label editing and export buttons
+        label_layout = QHBoxLayout()
+        self.edit_labels_btn = QPushButton("Position Labels")
+        self.edit_labels_btn.clicked.connect(self.edit_position_labels)
+        self.edit_labels_btn.setEnabled(False)
+        self.export_btn = QPushButton("Export to CSV")
+        self.export_btn.clicked.connect(self.export_to_csv)
+        self.export_btn.setEnabled(False)
+        label_layout.addWidget(self.edit_labels_btn)
+        label_layout.addWidget(self.export_btn)
+        review_layout.addLayout(label_layout)
+        
         review_group.setLayout(review_layout)
         left_layout.addWidget(review_group)
+        
+        left_layout.addStretch()
+        main_layout.addWidget(left_panel)
+        
+        # Center panel for plot
+        self.plot_widget = pg.PlotWidget()
+        self.plot_widget.setLabel('left', '电流 (A)', 'A')
+        self.plot_widget.setLabel('bottom', '时间 (s)', 's')
+        self.plot_widget.showGrid(True, True)
+        self.plot_widget.setMouseEnabled(x=True, y=True)
+        
+        # Add crosshair
+        self.crosshair_v = pg.InfiniteLine(angle=90, movable=False, pen='y')
+        self.crosshair_h = pg.InfiniteLine(angle=0, movable=False, pen='y')
+        self.plot_widget.addItem(self.crosshair_v, ignoreBounds=True)
+        self.plot_widget.addItem(self.crosshair_h, ignoreBounds=True)
+        
+        # Connect mouse move event
+        self.plot_widget.scene().sigMouseMoved.connect(self.mouse_moved)
+        
+        # Add coordinate label
+        self.coord_label = QLabel("Position: (0, 0)")
+        
+        # Create scrollable plot area
+        plot_panel = QWidget()
+        plot_layout = QVBoxLayout()
+        plot_layout.addWidget(self.plot_widget)
+        plot_layout.addWidget(self.coord_label)
+        plot_panel.setLayout(plot_layout)
+        
+        # Add scroll area for plot panel
+        scroll_area = QScrollArea()
+        scroll_area.setWidget(plot_panel)
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        
+        main_layout.addWidget(scroll_area, stretch=1)
+        
+        # Right panel for analysis parameters
+        right_panel = QWidget()
+        right_panel.setFixedWidth(300)
+        right_layout = QVBoxLayout()
+        right_layout.setSpacing(8)
+        right_panel.setLayout(right_layout)
         
         # Analysis parameters section
         param_group = QGroupBox("分析参数")
@@ -179,21 +257,24 @@ class SingleEventAnalyzer(QWidget):
         
         # Wavelet parameters (initially hidden)
         wavelet_layout = QHBoxLayout()
-        wavelet_layout.addWidget(QLabel("小波类型:"))
+        self.wavelet_type_label = QLabel("小波类型:")
+        wavelet_layout.addWidget(self.wavelet_type_label)
         self.wavelet_combo = QComboBox()
         self.wavelet_combo.addItems(["db4", "db6", "sym4", "coif4", "haar"])
         wavelet_layout.addWidget(self.wavelet_combo)
         param_layout.addLayout(wavelet_layout)
         
         scales_layout = QHBoxLayout()
-        scales_layout.addWidget(QLabel("小波尺度:"))
+        self.wavelet_scales_label = QLabel("小波尺度:")
+        scales_layout.addWidget(self.wavelet_scales_label)
         self.scales_input = QLineEdit("1-32")
         self.scales_input.setToolTip("小波尺度范围，例如: 1-32")
         scales_layout.addWidget(self.scales_input)
         param_layout.addLayout(scales_layout)
         
         wavelet_thresh_layout = QHBoxLayout()
-        wavelet_thresh_layout.addWidget(QLabel("小波阈值:"))
+        self.wavelet_thresh_label = QLabel("小波阈值:")
+        wavelet_thresh_layout.addWidget(self.wavelet_thresh_label)
         self.wavelet_threshold_input = QDoubleSpinBox()
         self.wavelet_threshold_input.setRange(0.1, 10.0)
         self.wavelet_threshold_input.setValue(3.0)
@@ -203,7 +284,8 @@ class SingleEventAnalyzer(QWidget):
         
         # ML parameters (initially hidden)
         ml_model_layout = QHBoxLayout()
-        ml_model_layout.addWidget(QLabel("ML模型路径:"))
+        self.ml_model_label = QLabel("ML模型路径:")
+        ml_model_layout.addWidget(self.ml_model_label)
         self.ml_model_input = QLineEdit()
         self.ml_model_input.setPlaceholderText("可选: 预训练模型路径")
         ml_model_layout.addWidget(self.ml_model_input)
@@ -233,61 +315,15 @@ class SingleEventAnalyzer(QWidget):
         param_layout.addLayout(prominence_display_layout)
         
         param_group.setLayout(param_layout)
-        left_layout.addWidget(param_group)
+        right_layout.addWidget(param_group)
         
-        # Connect algorithm selection change
+        # Connect algorithm selection change (moved after algorithm_combo definition)
         self.algorithm_combo.currentTextChanged.connect(self.on_algorithm_changed)
         # Initially hide wavelet and ML parameters
         self.hide_advanced_parameters()
         
-        # Results section
-        results_group = QGroupBox("分析结果")
-        results_layout = QVBoxLayout()
-        
-        self.results_text = QTextEdit()
-        self.results_text.setMaximumHeight(200)
-        results_layout.addWidget(self.results_text)
-        
-        results_group.setLayout(results_layout)
-        left_layout.addWidget(results_group)
-        
-        left_layout.addStretch()
-        main_layout.addWidget(left_panel)
-        
-        # Right panel for plot
-        self.plot_widget = pg.PlotWidget()
-        self.plot_widget.setLabel('left', '电流 (A)', 'A')
-        self.plot_widget.setLabel('bottom', '时间 (s)', 's')
-        self.plot_widget.showGrid(True, True)
-        self.plot_widget.setMouseEnabled(x=True, y=True)
-        
-        # Add crosshair
-        self.crosshair_v = pg.InfiniteLine(angle=90, movable=False, pen='y')
-        self.crosshair_h = pg.InfiniteLine(angle=0, movable=False, pen='y')
-        self.plot_widget.addItem(self.crosshair_v, ignoreBounds=True)
-        self.plot_widget.addItem(self.crosshair_h, ignoreBounds=True)
-        
-        # Connect mouse move event
-        self.plot_widget.scene().sigMouseMoved.connect(self.mouse_moved)
-        
-        # Add coordinate label
-        self.coord_label = QLabel("Position: (0, 0)")
-        
-        # Create scrollable plot area
-        plot_panel = QWidget()
-        plot_layout = QVBoxLayout()
-        plot_layout.addWidget(self.plot_widget)
-        plot_layout.addWidget(self.coord_label)
-        plot_panel.setLayout(plot_layout)
-        
-        # Add scroll area for plot panel
-        scroll_area = QScrollArea()
-        scroll_area.setWidget(plot_panel)
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        
-        main_layout.addWidget(scroll_area, stretch=1)
+        right_layout.addStretch()
+        main_layout.addWidget(right_panel)
     
     # 这里包含所有单事件分析的方法（从原main.py复制）
     def mouse_moved(self, pos):
@@ -464,36 +500,52 @@ class SingleEventAnalyzer(QWidget):
     
     def hide_advanced_parameters(self):
         """隐藏小波和ML参数"""
-        # Hide wavelet parameters
+        # Hide wavelet parameters and labels
+        self.wavelet_type_label.hide()
         self.wavelet_combo.hide()
+        self.wavelet_scales_label.hide()
         self.scales_input.hide()
+        self.wavelet_thresh_label.hide()
         self.wavelet_threshold_input.hide()
         
-        # Hide ML parameters
+        # Hide ML parameters and labels
+        self.ml_model_label.hide()
         self.ml_model_input.hide()
         self.ml_browse_btn.hide()
 
     def on_algorithm_changed(self, algorithm):
         """当算法选择改变时，显示或隐藏高级参数"""
         if algorithm == "Wavelet Transform":
-            # Show wavelet parameters, hide ML parameters
+            # Show wavelet parameters and labels, hide ML parameters
+            self.wavelet_type_label.show()
             self.wavelet_combo.show()
+            self.wavelet_scales_label.show()
             self.scales_input.show()
+            self.wavelet_thresh_label.show()
             self.wavelet_threshold_input.show()
+            self.ml_model_label.hide()
             self.ml_model_input.hide()
             self.ml_browse_btn.hide()
         elif algorithm == "Machine Learning":
-            # Show ML parameters, hide wavelet parameters
+            # Show ML parameters and labels, hide wavelet parameters
+            self.wavelet_type_label.hide()
             self.wavelet_combo.hide()
+            self.wavelet_scales_label.hide()
             self.scales_input.hide()
+            self.wavelet_thresh_label.hide()
             self.wavelet_threshold_input.hide()
+            self.ml_model_label.show()
             self.ml_model_input.show()
             self.ml_browse_btn.show()
         else:
             # Hide both for Scipy find_peaks
+            self.wavelet_type_label.hide()
             self.wavelet_combo.hide()
+            self.wavelet_scales_label.hide()
             self.scales_input.hide()
+            self.wavelet_thresh_label.hide()
             self.wavelet_threshold_input.hide()
+            self.ml_model_label.hide()
             self.ml_model_input.hide()
             self.ml_browse_btn.hide()
 
@@ -547,11 +599,15 @@ class SingleEventAnalyzer(QWidget):
             
             # Reset analysis results
             self.peaks_data = []
-            self.results_text.clear()
-            self.peak_list_widget.clear()
+            self.peak_table_widget.setRowCount(0)  # 清空表格
+            self.labels_edited = False  # 重置labels编辑状态
             self.export_btn.setEnabled(False)
             self.select_all_btn.setEnabled(False)
             self.select_none_btn.setEnabled(False)
+            self.mark_keep_btn.setEnabled(False)
+            self.mark_delete_btn.setEnabled(False)
+            self.clear_status_btn.setEnabled(False)
+            self.edit_labels_btn.setEnabled(False)
             
         except Exception as e:
             QMessageBox.critical(self, "错误", f"加载文件失败: {str(e)}")
@@ -670,6 +726,7 @@ class SingleEventAnalyzer(QWidget):
                 
                 # For wavelet method, we need to compute properties using find_peaks
                 if len(peaks) > 0:
+                    prominence = self.prominence_input.value()
                     peaks, properties = find_peaks(-self.current_data, prominence=prominence, wlen=40, distance=10)
                     # Filter to only include peaks found by wavelet method
                     wavelet_peaks_set = set(peaks)
@@ -692,6 +749,7 @@ class SingleEventAnalyzer(QWidget):
                 
                 # For ML method, we need to compute properties using find_peaks
                 if len(peaks) > 0:
+                    prominence = self.prominence_input.value()
                     peaks, properties = find_peaks(-self.current_data, prominence=prominence, wlen=40, distance=10)
                     # Filter to only include peaks found by ML method
                     ml_peaks_set = set(peaks)
@@ -706,6 +764,7 @@ class SingleEventAnalyzer(QWidget):
                 
             else:
                 # Default Scipy find_peaks method
+                prominence = self.prominence_input.value()
                 peaks, properties = find_peaks(-self.current_data,
                                              prominence=prominence,
                                              wlen=40,
@@ -737,7 +796,6 @@ class SingleEventAnalyzer(QWidget):
         below_threshold_indices = np.where(below_threshold_mask)[0]
         
         if len(below_threshold_indices) == 0:
-            self.results_text.setText("未找到低于阈值的数据点。")
             return
         
         # Extract data below threshold
@@ -789,7 +847,6 @@ class SingleEventAnalyzer(QWidget):
         print(f"Debug: Right bases: {right_bases}")
         
         if len(peaks) == 0:
-            self.results_text.setText("在低于阈值的数据中未找到峰值。")
             return
         
         # Calculate total time below threshold and identify event segments
@@ -892,42 +949,40 @@ class SingleEventAnalyzer(QWidget):
                 'right_base_i': self.current_data[right_bases[i]] if i < len(right_bases) else None
             })
         
-        # Display results
-        current_unit = self.get_current_unit()
-        results_text = f"分析结果:\n"
-        results_text += f"文件: {current_file}\n"
-        results_text += f"基线值: {baseline:.6f}{current_unit}\n"
-        results_text += f"相对阈值: {relative_threshold:.6f}{current_unit}\n"
-        results_text += f"实际阈值: {actual_threshold:.6f}{current_unit}\n"
-        results_text += f"找到峰值: {len(peaks)}\n"
-        results_text += f"总时间 (低于阈值): {total_time:.6f} s\n"
-        results_text += f"Prominence值范围: {prominences.min():.6f} - {prominences.max():.6f}\n"
-        results_text += f"平均Prominence: {prominences.mean():.6f}\n\n"
         
+        # Populate peak table for review
+        self.peak_table_widget.setRowCount(len(self.peaks_data))
         for i, peak_data in enumerate(self.peaks_data):
-            results_text += f"峰值 {i+1}:\n"
-            results_text += f"  时间: {peak_data['peak_t']:.6f}s\n"
-            results_text += f"  电流: {peak_data['peak_i']:.6f}{current_unit}\n"
-            results_text += f"  起点时间: {peak_data['peak_start_t']:.6f}s\n"
-            results_text += f"  起点电流: {peak_data['peak_start_i']:.6f}{current_unit}\n"
-            results_text += f"  振幅 (Prominence): {peak_data['peak_amplitude']:.6f}\n"
-            if peak_data['left_base_t'] is not None:
-                results_text += f"  左基点: {peak_data['left_base_t']:.6f}s, {peak_data['left_base_i']:.6f}{current_unit}\n"
-            if peak_data['right_base_t'] is not None:
-                results_text += f"  右基点: {peak_data['right_base_t']:.6f}s, {peak_data['right_base_i']:.6f}{current_unit}\n"
-            results_text += f"  相对时间: {peak_data['peak_rel_t']:.6f}\n"
-            results_text += f"  相对电流: {peak_data['peak_rel_i']:.6f}\n\n"
-        
-        self.results_text.setText(results_text)
-        
-        # Populate peak list for review
-        self.peak_list_widget.clear()
-        for i, peak_data in enumerate(self.peaks_data):
-            item_text = f"峰值 {i+1}: 时间={peak_data['peak_t']:.6f}s, Prominence={peak_data['peak_amplitude']:.6f}"
-            item = QListWidgetItem(item_text)
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(Qt.Unchecked)  # 默认设置为未选中
-            self.peak_list_widget.addItem(item)
+            # 选择列（复选框）
+            checkbox_item = QTableWidgetItem()
+            checkbox_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+            checkbox_item.setCheckState(Qt.Unchecked)
+            self.peak_table_widget.setItem(i, 0, checkbox_item)
+            
+            # 峰值编号
+            peak_num_item = QTableWidgetItem(f"峰值 {i+1}")
+            peak_num_item.setFlags(Qt.ItemIsEnabled)
+            self.peak_table_widget.setItem(i, 1, peak_num_item)
+            
+            # 审核状态 (下拉框)
+            status_item = QTableWidgetItem("待审核")
+            status_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsEditable)
+            self.peak_table_widget.setItem(i, 2, status_item)
+            
+            # Position Label (可编辑)
+            label_item = QTableWidgetItem("")
+            label_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsEditable)
+            self.peak_table_widget.setItem(i, 3, label_item)
+            
+            # 时间
+            time_item = QTableWidgetItem(f"{peak_data['peak_t']:.6f}")
+            time_item.setFlags(Qt.ItemIsEnabled)
+            self.peak_table_widget.setItem(i, 4, time_item)
+            
+            # Prominence
+            prominence_item = QTableWidgetItem(f"{peak_data['peak_amplitude']:.6f}")
+            prominence_item.setFlags(Qt.ItemIsEnabled)
+            self.peak_table_widget.setItem(i, 5, prominence_item)
         
         # Plot peaks on the graph
         self.plot_data()
@@ -977,38 +1032,111 @@ class SingleEventAnalyzer(QWidget):
         # Enable review and export buttons
         self.select_all_btn.setEnabled(True)
         self.select_none_btn.setEnabled(True)
+        self.mark_keep_btn.setEnabled(True)
+        self.mark_delete_btn.setEnabled(True)
+        self.clear_status_btn.setEnabled(True)
         self.export_btn.setEnabled(True)
+        self.edit_labels_btn.setEnabled(True)
     
     def select_all_peaks(self):
         """选择所有峰值"""
-        for i in range(self.peak_list_widget.count()):
-            item = self.peak_list_widget.item(i)
-            item.setCheckState(Qt.Checked)
+        for i in range(self.peak_table_widget.rowCount()):
+            item = self.peak_table_widget.item(i, 0)  # 选择列
+            if item:
+                item.setCheckState(Qt.Checked)
     
     def select_none_peaks(self):
         """取消选择所有峰值"""
-        for i in range(self.peak_list_widget.count()):
-            item = self.peak_list_widget.item(i)
-            item.setCheckState(Qt.Unchecked)
+        for i in range(self.peak_table_widget.rowCount()):
+            item = self.peak_table_widget.item(i, 0)  # 选择列
+            if item:
+                item.setCheckState(Qt.Unchecked)
+    
+    def mark_selected_as_keep(self):
+        """将选中的峰值标记为保留"""
+        for i in range(self.peak_table_widget.rowCount()):
+            checkbox_item = self.peak_table_widget.item(i, 0)  # 选择列
+            if checkbox_item and checkbox_item.checkState() == Qt.Checked:
+                status_item = self.peak_table_widget.item(i, 2)  # 审核状态列
+                if status_item:
+                    status_item.setText("保留")
+    
+    def mark_selected_as_delete(self):
+        """将选中的峰值标记为删除"""
+        for i in range(self.peak_table_widget.rowCount()):
+            checkbox_item = self.peak_table_widget.item(i, 0)  # 选择列
+            if checkbox_item and checkbox_item.checkState() == Qt.Checked:
+                status_item = self.peak_table_widget.item(i, 2)  # 审核状态列
+                if status_item:
+                    status_item.setText("删除")
+    
+    def clear_selected_status(self):
+        """清除选中峰值的审核状态"""
+        for i in range(self.peak_table_widget.rowCount()):
+            checkbox_item = self.peak_table_widget.item(i, 0)  # 选择列
+            if checkbox_item and checkbox_item.checkState() == Qt.Checked:
+                status_item = self.peak_table_widget.item(i, 2)  # 审核状态列
+                if status_item:
+                    status_item.setText("待审核")
     
     def get_selected_peaks(self):
-        """获取选中的峰值数据"""
+        """获取标记为保留的峰值数据"""
         selected_peaks = []
-        for i in range(self.peak_list_widget.count()):
-            item = self.peak_list_widget.item(i)
-            if item.checkState() == Qt.Checked:
-                selected_peaks.append(self.peaks_data[i])
+        for i in range(self.peak_table_widget.rowCount()):
+            status_item = self.peak_table_widget.item(i, 2)  # 审核状态列
+            if status_item and status_item.text() == "保留":
+                # 获取position label
+                label_item = self.peak_table_widget.item(i, 3)  # Position Label列
+                position_label = label_item.text() if label_item else ""
+                
+                # 创建包含position label的峰值数据
+                peak_data = self.peaks_data[i].copy()
+                peak_data['position_label'] = position_label
+                selected_peaks.append(peak_data)
         return selected_peaks
+    
+    def edit_position_labels(self):
+        """编辑Position Labels对话框"""
+        if not hasattr(self, 'peaks_data') or not self.peaks_data:
+            QMessageBox.warning(self, "警告", "没有分析结果可编辑。")
+            return
+        
+        # 只获取标记为"保留"的峰值
+        kept_peaks = []
+        kept_indices = []
+        for i in range(self.peak_table_widget.rowCount()):
+            status_item = self.peak_table_widget.item(i, 2)  # 审核状态列
+            if status_item and status_item.text() == "保留":
+                kept_peaks.append(self.peaks_data[i])
+                kept_indices.append(i)
+        
+        if not kept_peaks:
+            QMessageBox.warning(self, "警告", "没有标记为保留的峰值可编辑。")
+            return
+        
+        dialog = PositionLabelDialog(kept_peaks, self)
+        if dialog.exec_() == QDialog.Accepted:
+            # 更新表格中的position labels
+            labels = dialog.get_labels()
+            for i, label in enumerate(labels):
+                if i < len(kept_indices):
+                    row_index = kept_indices[i]
+                    label_item = self.peak_table_widget.item(row_index, 3)  # Position Label列
+                    if label_item:
+                        label_item.setText(label)
+            
+            # 标记已编辑过labels
+            self.labels_edited = True
     
     def export_to_csv(self):
         if not self.peaks_data:
             QMessageBox.warning(self, "警告", "没有分析结果可导出。")
             return
         
-        # Get selected peaks
+        # Get selected peaks (only those marked as "保留")
         selected_peaks = self.get_selected_peaks()
         if not selected_peaks:
-            QMessageBox.warning(self, "警告", "请至少选择一个峰值进行导出。")
+            QMessageBox.warning(self, "警告", "没有标记为保留的峰值可导出。")
             return
         
         # Create CSV filename based on folder name
@@ -1021,9 +1149,15 @@ class SingleEventAnalyzer(QWidget):
         
         try:
             with open(csv_path, 'a', newline='', encoding='utf-8') as csvfile:
+                # 根据是否编辑过labels决定字段名
                 fieldnames = ['file_name', 'peak_number', 'total_time', 'peak_t', 'peak_i', 
                              'peak_start_i', 'peak_start_t', 'peak_amplitude', 'peak_rel_t', 'peak_rel_i',
                              'left_base_t', 'left_base_i', 'right_base_t', 'right_base_i']
+                
+                # 如果编辑过labels，添加position_label字段
+                if self.labels_edited:
+                    fieldnames.append('position_label')
+                
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                 
                 # Write header only if file doesn't exist
@@ -1032,12 +1166,19 @@ class SingleEventAnalyzer(QWidget):
                 
                 # Write only selected peaks data
                 for peak_data in selected_peaks:
+                    # 如果没有编辑过labels，移除position_label字段
+                    if not self.labels_edited and 'position_label' in peak_data:
+                        del peak_data['position_label']
                     writer.writerow(peak_data)
             
-#            message = f"成功导出 {len(selected_peaks)} 个峰值到 {csv_path}"
-#            if file_exists:
-#                message += "\n(数据已追加到现有文件)"
-#            QMessageBox.information(self, "导出成功", message)
+            message = f"成功导出 {len(selected_peaks)} 个保留的峰值到 {csv_path}"
+            if file_exists:
+                message += "\n(数据已追加到现有文件)"
+            if self.labels_edited:
+                message += "\n(包含Position Labels)"
+            else:
+                message += "\n(未包含Position Labels)"
+            QMessageBox.information(self, "导出成功", message)
             
         except Exception as e:
             QMessageBox.critical(self, "错误", f"导出CSV失败: {str(e)}")
@@ -2638,6 +2779,74 @@ def main():
     window = MainApplication()
     window.show()
     sys.exit(app.exec_())
+
+
+class PositionLabelDialog(QDialog):
+    """Position Label编辑对话框"""
+    
+    def __init__(self, peaks_data, parent=None):
+        super().__init__(parent)
+        self.peaks_data = peaks_data
+        self.setWindowTitle("编辑Position Labels")
+        self.setModal(True)
+        self.resize(600, 400)
+        
+        layout = QVBoxLayout()
+        
+        # 说明文字
+        info_label = QLabel("为每个峰值设置Position Label（可选）:")
+        layout.addWidget(info_label)
+        
+        # 创建表格
+        self.table = QTableWidget()
+        self.table.setColumnCount(3)
+        self.table.setHorizontalHeaderLabels(["峰值编号", "时间 (s)", "Position Label"])
+        
+        # 设置列宽
+        self.table.setColumnWidth(0, 100)
+        self.table.setColumnWidth(1, 150)
+        self.table.setColumnWidth(2, 200)
+        
+        # 填充数据
+        self.table.setRowCount(len(peaks_data))
+        for i, peak_data in enumerate(peaks_data):
+            # 峰值编号
+            peak_num_item = QTableWidgetItem(f"峰值 {i+1}")
+            peak_num_item.setFlags(Qt.ItemIsEnabled)
+            self.table.setItem(i, 0, peak_num_item)
+            
+            # 时间
+            time_item = QTableWidgetItem(f"{peak_data['peak_t']:.6f}")
+            time_item.setFlags(Qt.ItemIsEnabled)
+            self.table.setItem(i, 1, time_item)
+            
+            # Position Label (可编辑)
+            label_item = QTableWidgetItem("")
+            label_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsEditable)
+            self.table.setItem(i, 2, label_item)
+        
+        layout.addWidget(self.table)
+        
+        # 按钮
+        button_layout = QHBoxLayout()
+        self.ok_btn = QPushButton("确定")
+        self.cancel_btn = QPushButton("取消")
+        self.ok_btn.clicked.connect(self.accept)
+        self.cancel_btn.clicked.connect(self.reject)
+        button_layout.addWidget(self.ok_btn)
+        button_layout.addWidget(self.cancel_btn)
+        layout.addLayout(button_layout)
+        
+        self.setLayout(layout)
+    
+    def get_labels(self):
+        """获取所有position labels"""
+        labels = []
+        for i in range(self.table.rowCount()):
+            label_item = self.table.item(i, 2)
+            labels.append(label_item.text() if label_item else "")
+        return labels
+
 
 if __name__ == '__main__':
     main()
