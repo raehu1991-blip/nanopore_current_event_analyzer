@@ -2815,7 +2815,7 @@ class PositionLabelDialog(QDialog):
         # 创建表格
         self.table = QTableWidget()
         self.table.setColumnCount(3)
-        self.table.setHorizontalHeaderLabels(["峰值编号", "时间 (s)", "Position Label"])
+        self.table.setHorizontalHeaderLabels(["峰值编号", "Prominence", "Position Label"])
         
         # 设置列宽
         self.table.setColumnWidth(0, 100)
@@ -2830,10 +2830,10 @@ class PositionLabelDialog(QDialog):
             peak_num_item.setFlags(Qt.ItemIsEnabled)
             self.table.setItem(i, 0, peak_num_item)
             
-            # 时间
-            time_item = QTableWidgetItem(f"{peak_data['peak_t']:.6f}")
-            time_item.setFlags(Qt.ItemIsEnabled)
-            self.table.setItem(i, 1, time_item)
+            # Prominence
+            prominence_item = QTableWidgetItem(f"{peak_data['peak_amplitude']:.6f}")
+            prominence_item.setFlags(Qt.ItemIsEnabled)
+            self.table.setItem(i, 1, prominence_item)
             
             # Position Label (可编辑)
             label_item = QTableWidgetItem("")
