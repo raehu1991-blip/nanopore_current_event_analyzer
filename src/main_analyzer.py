@@ -117,8 +117,8 @@ class SingleEventAnalyzer(QWidget):
         # Peak table with checkboxes and position labels
         self.peak_table_widget = QTableWidget()
         self.peak_table_widget.setMaximumHeight(300)
-        self.peak_table_widget.setColumnCount(6)
-        self.peak_table_widget.setHorizontalHeaderLabels(["选择", "峰值编号","审核状态", "Position Label", "时间 (s)", "Prominence"])
+        self.peak_table_widget.setColumnCount(7)
+        self.peak_table_widget.setHorizontalHeaderLabels(["选择", "峰值编号","审核状态", "Position Label", "时间 (s)", "Prominence", "宽度 (ms)"])
         
         # Set column widths
         self.peak_table_widget.setColumnWidth(0, 50)  # 选择列
@@ -127,6 +127,7 @@ class SingleEventAnalyzer(QWidget):
         self.peak_table_widget.setColumnWidth(3, 80) # Position Label
         self.peak_table_widget.setColumnWidth(4, 80)  # 时间
         self.peak_table_widget.setColumnWidth(5, 80) # Prominence
+        self.peak_table_widget.setColumnWidth(6, 80) # 宽度
         
         # Make the table read-only except for position label column
         self.peak_table_widget.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -261,6 +262,17 @@ class SingleEventAnalyzer(QWidget):
         prominence_layout.addWidget(self.prominence_input)
         param_layout.addLayout(prominence_layout)
         
+        # Window length parameter for peak detection
+        wlen_layout = QHBoxLayout()
+        wlen_layout.addWidget(QLabel("Window Length:"))
+        self.wlen_input = QSpinBox()
+        self.wlen_input.setRange(1, 200)
+        self.wlen_input.setValue(40)  # 默认值
+        self.wlen_input.setSingleStep(1)
+        self.wlen_input.setToolTip("用于计算prominence的窗口长度（采样点数）")
+        wlen_layout.addWidget(self.wlen_input)
+        param_layout.addLayout(wlen_layout)
+        
         # Wavelet parameters (initially hidden)
         wavelet_layout = QHBoxLayout()
         self.wavelet_type_label = QLabel("小波类型:")
@@ -321,6 +333,14 @@ class SingleEventAnalyzer(QWidget):
         prominence_display_layout.addWidget(self.show_prominence_checkbox)
         param_layout.addLayout(prominence_display_layout)
         
+        # FWHM line display toggle
+        fwhm_display_layout = QHBoxLayout()
+        self.show_fwhm_checkbox = QCheckBox("显示半高宽标记线")
+        self.show_fwhm_checkbox.setChecked(True)  # 默认勾选
+        self.show_fwhm_checkbox.stateChanged.connect(self.toggle_fwhm_display)
+        fwhm_display_layout.addWidget(self.show_fwhm_checkbox)
+        param_layout.addLayout(fwhm_display_layout)
+        
         param_group.setLayout(param_layout)
         right_layout.addWidget(param_group)
         
@@ -361,6 +381,14 @@ class SingleEventAnalyzer(QWidget):
             # 重新绘制分析结果（包括prominence线）
             self.redraw_analysis_results()
     
+    def toggle_fwhm_display(self, state):
+        """切换半高宽标记线的显示状态"""
+        # 如果当前有分析结果，重新绘制图表
+        if hasattr(self, 'peaks_data') and self.peaks_data:
+            self.plot_data()
+            # 重新绘制分析结果（包括半高宽线）
+            self.redraw_analysis_results()
+    
     def draw_prominence_lines(self, peak_times, peak_currents, prominences):
         """绘制prominence竖线"""
         # 检查是否应该显示prominence线
@@ -375,6 +403,49 @@ class SingleEventAnalyzer(QWidget):
             prominence_line = self.plot_widget.plot([t, t], [ymin, ymax], 
                                                   pen=pg.mkPen(color=(0, 0, 255), width=2), 
                                                   name=f'Prominence_{i+1}' if i == 0 else None)
+    
+    def draw_fwhm_lines(self, peak_times, peak_currents, peak_widths_us):
+        """绘制半高全宽标记线"""
+        # 检查是否应该显示半高宽线
+        if not self.show_fwhm_checkbox.isChecked():
+            return
+            
+        for i, peak_data in enumerate(self.peaks_data):
+            if i >= len(peak_times):
+                break
+                
+            width_us = peak_data.get('peak_width_us', 0)
+            if width_us <= 0:
+                continue
+                
+            # 使用scipy.peak_widths计算的实际半高宽边界
+            left_time = peak_data.get('fwhm_left_time')
+            right_time = peak_data.get('fwhm_right_time')
+            fwhm_height = peak_data.get('fwhm_height')
+            
+            if left_time is None or right_time is None or fwhm_height is None:
+                continue
+            
+            # 绘制水平线表示半高宽
+            fwhm_line = self.plot_widget.plot([left_time, right_time], [fwhm_height, fwhm_height], 
+                                            pen=pg.mkPen(color=(255, 165, 0), width=2, style=Qt.DashLine), 
+                                            name=f'FWHM_{i+1}' if i == 0 else None)
+            
+            # 绘制左右边界线
+            height_range = abs(fwhm_height) * 0.1  # 根据高度动态调整边界线长度
+            left_boundary = self.plot_widget.plot([left_time, left_time], 
+                                                [fwhm_height - height_range, fwhm_height + height_range], 
+                                                pen=pg.mkPen(color=(255, 165, 0), width=2))
+            right_boundary = self.plot_widget.plot([right_time, right_time], 
+                                                 [fwhm_height - height_range, fwhm_height + height_range], 
+                                                 pen=pg.mkPen(color=(255, 165, 0), width=2))
+            
+            # 添加半高宽标签
+            fwhm_text = pg.TextItem(f'FWHM: {width_us:.1f}μs', 
+                                  color=(255, 165, 0), 
+                                  anchor=(0.5, -0.5))
+            fwhm_text.setPos(peak_times[i], fwhm_height)
+            self.plot_widget.addItem(fwhm_text)
     
     def redraw_analysis_results(self):
         """重新绘制分析结果"""
@@ -392,6 +463,10 @@ class SingleEventAnalyzer(QWidget):
             # 重新绘制prominence竖线
             prominences = [peak['peak_amplitude'] for peak in self.peaks_data]
             self.draw_prominence_lines(peak_times, peak_currents, prominences)
+            
+            # 重新绘制半高宽线
+            peak_widths_us = [peak['peak_width_us'] for peak in self.peaks_data]
+            self.draw_fwhm_lines(peak_times, peak_currents, peak_widths_us)
             
             # 重新绘制prominence标签
             for i, (t, curr, prominence_val) in enumerate(zip(peak_times, peak_currents, prominences)):
@@ -734,7 +809,8 @@ class SingleEventAnalyzer(QWidget):
                 # For wavelet method, we need to compute properties using find_peaks
                 if len(peaks) > 0:
                     prominence = self.prominence_input.value()
-                    peaks, properties = find_peaks(-self.current_data, prominence=prominence, wlen=40, distance=10)
+                    wlen = self.wlen_input.value()
+                    peaks, properties = find_peaks(-self.current_data, prominence=prominence, wlen=wlen, distance=10)
                     # Filter to only include peaks found by wavelet method
                     wavelet_peaks_set = set(peaks)
                     peaks = [p for p in peaks if p in wavelet_peaks_set]
@@ -757,7 +833,8 @@ class SingleEventAnalyzer(QWidget):
                 # For ML method, we need to compute properties using find_peaks
                 if len(peaks) > 0:
                     prominence = self.prominence_input.value()
-                    peaks, properties = find_peaks(-self.current_data, prominence=prominence, wlen=40, distance=10)
+                    wlen = self.wlen_input.value()
+                    peaks, properties = find_peaks(-self.current_data, prominence=prominence, wlen=wlen, distance=10)
                     # Filter to only include peaks found by ML method
                     ml_peaks_set = set(peaks)
                     peaks = [p for p in peaks if p in ml_peaks_set]
@@ -772,9 +849,10 @@ class SingleEventAnalyzer(QWidget):
             else:
                 # Default Scipy find_peaks method
                 prominence = self.prominence_input.value()
+                wlen = self.wlen_input.value()
                 peaks, properties = find_peaks(-self.current_data,
                                              prominence=prominence,
-                                             wlen=40,
+                                             wlen=wlen,
                                              distance=10)
         except ImportError as e:
             QMessageBox.warning(self, "依赖错误", f"{str(e)}\n请安装所需依赖。")
@@ -809,23 +887,31 @@ class SingleEventAnalyzer(QWidget):
         below_threshold_current = self.current_data[below_threshold_indices]
         below_threshold_time = self.time_data[below_threshold_indices]
         
-        # Use find_peaks with prominence for better peak control
-        # prominence控制峰的显著性
+        # Use find_peaks with prominence and width for better peak control
+        # prominence控制峰的显著性，width计算半高宽
+        wlen = self.wlen_input.value()
         peaks, properties = find_peaks(-self.current_data, 
                                      prominence=prominence,
-                                     wlen=40,
+                                     width=1,  # 最小宽度（采样点数）
+                                     rel_height=0.5,  # 半高宽
+                                     wlen=wlen,
                                      distance=10)
         
-        # Filter peaks to only include those below threshold and save corresponding prominences, left_bases, right_bases
+        # Filter peaks to only include those below threshold and save corresponding properties
         threshold_peaks = []
         threshold_prominences = []
         threshold_left_bases = []
         threshold_right_bases = []
+        threshold_widths = []
+        threshold_left_ips = []
+        threshold_right_ips = []
+        threshold_width_heights = []
         
         for i, peak in enumerate(peaks):
             if self.current_data[peak] < actual_threshold:
                 threshold_peaks.append(peak)
-                # 直接从properties中获取对应的prominence值
+                
+                # 获取prominence值
                 if 'prominences' in properties and i < len(properties['prominences']):
                     threshold_prominences.append(properties['prominences'][i])
                 else:
@@ -835,23 +921,59 @@ class SingleEventAnalyzer(QWidget):
                 if 'left_bases' in properties and i < len(properties['left_bases']):
                     threshold_left_bases.append(properties['left_bases'][i])
                 else:
-                    threshold_left_bases.append(peak)  # 默认为峰值位置
+                    threshold_left_bases.append(peak)
                 
                 if 'right_bases' in properties and i < len(properties['right_bases']):
                     threshold_right_bases.append(properties['right_bases'][i])
                 else:
-                    threshold_right_bases.append(peak)  # 默认为峰值位置
+                    threshold_right_bases.append(peak)
+                
+                # 获取宽度相关属性
+                if 'widths' in properties and i < len(properties['widths']):
+                    threshold_widths.append(properties['widths'][i])
+                else:
+                    threshold_widths.append(0.0)
+                
+                if 'left_ips' in properties and i < len(properties['left_ips']):
+                    threshold_left_ips.append(properties['left_ips'][i])
+                else:
+                    threshold_left_ips.append(peak)
+                
+                if 'right_ips' in properties and i < len(properties['right_ips']):
+                    threshold_right_ips.append(properties['right_ips'][i])
+                else:
+                    threshold_right_ips.append(peak)
+                
+                if 'width_heights' in properties and i < len(properties['width_heights']):
+                    threshold_width_heights.append(properties['width_heights'][i])
+                else:
+                    threshold_width_heights.append(self.current_data[peak] / 2)
         
         peaks = np.array(threshold_peaks)
         prominences = np.array(threshold_prominences)
         left_bases = np.array(threshold_left_bases)
         right_bases = np.array(threshold_right_bases)
         
+        # 计算峰值宽度（半高全宽FWHM）
+        if len(peaks) > 0:
+            # 使用过滤后的宽度数据，转换为微秒
+            peak_widths_us = np.array(threshold_widths) / self.sample_rate * 1000000
+            left_ips_times = np.array(threshold_left_ips) / self.sample_rate
+            right_ips_times = np.array(threshold_right_ips) / self.sample_rate
+            # 将width_heights转换为实际电流值（注意：find_peaks使用负信号，所以需要取负值）
+            fwhm_heights = -np.array(threshold_width_heights)
+        else:
+            peak_widths_us = np.array([])
+            left_ips_times = np.array([])
+            right_ips_times = np.array([])
+            fwhm_heights = np.array([])
+        
         # 调试信息：打印prominence值和bases
         print(f"Debug: Found {len(peaks)} peaks")
         print(f"Debug: Prominences: {prominences}")
         print(f"Debug: Left bases: {left_bases}")
         print(f"Debug: Right bases: {right_bases}")
+        print(f"Debug: Peak widths (μs): {peak_widths_us}")
         
         if len(peaks) == 0:
             return
@@ -948,6 +1070,10 @@ class SingleEventAnalyzer(QWidget):
                 'peak_start_i': peak_start_currents[i],
                 'peak_start_t': peak_start_times[i],
                 'peak_amplitude': peak_amplitudes[i],  # 现在使用prominence值
+                'peak_width_us': peak_widths_us[i] if i < len(peak_widths_us) else 0.0,  # 峰值宽度（微秒）
+                'fwhm_left_time': left_ips_times[i] if i < len(left_ips_times) else None,  # 半高宽左边界时间
+                'fwhm_right_time': right_ips_times[i] if i < len(right_ips_times) else None,  # 半高宽右边界时间
+                'fwhm_height': fwhm_heights[i] if i < len(fwhm_heights) else None,  # 半高宽对应的高度
                 'peak_rel_t': peak_rel_t,
                 'peak_rel_i': peak_rel_i,
                 'left_base_t': self.time_data[left_bases[i]] if i < len(left_bases) else None,
@@ -990,6 +1116,11 @@ class SingleEventAnalyzer(QWidget):
             prominence_item = QTableWidgetItem(f"{peak_data['peak_amplitude']:.6f}")
             prominence_item.setFlags(Qt.ItemIsEnabled)
             self.peak_table_widget.setItem(i, 5, prominence_item)
+            
+            # 宽度 (μs)
+            width_item = QTableWidgetItem(f"{peak_data['peak_width_us']:.2f}")
+            width_item.setFlags(Qt.ItemIsEnabled)
+            self.peak_table_widget.setItem(i, 6, width_item)
         
         # Plot peaks on the graph
         self.plot_data()
@@ -1005,12 +1136,15 @@ class SingleEventAnalyzer(QWidget):
             
             # Add prominence value labels on the plot
             for i, (t, curr, prominence_val) in enumerate(zip(peak_times, peak_currents, prominences)):
-                # Create text item for prominence value
+                # Create text item for prominence values
                 text_item = pg.TextItem(f'P{i+1}', 
                                       color=(255, 0, 0), 
                                       anchor=(0.5, 1.5))
                 text_item.setPos(t, curr)
                 self.plot_widget.addItem(text_item)
+            
+            # 绘制半高宽标记线
+            self.draw_fwhm_lines(peak_times, peak_currents, peak_widths_us)
         
         # Add left_bases and right_bases markers
         if len(peaks) > 0:
@@ -1166,7 +1300,8 @@ class SingleEventAnalyzer(QWidget):
             with open(csv_path, 'a', newline='', encoding='utf-8') as csvfile:
                 # 根据是否编辑过labels决定字段名
                 fieldnames = ['file_name', 'peak_number', 'total_time', 'peak_t', 'peak_i', 
-                             'peak_start_i', 'peak_start_t', 'peak_amplitude', 'peak_rel_t', 'peak_rel_i',
+                             'peak_start_i', 'peak_start_t', 'peak_amplitude', 'peak_width_us', 
+                             'fwhm_left_time', 'fwhm_right_time', 'fwhm_height', 'peak_rel_t', 'peak_rel_i',
                              'left_base_t', 'left_base_i', 'right_base_t', 'right_base_i']
                 
                 # 如果编辑过labels，添加position_label字段
@@ -2814,13 +2949,14 @@ class PositionLabelDialog(QDialog):
         
         # 创建表格
         self.table = QTableWidget()
-        self.table.setColumnCount(3)
-        self.table.setHorizontalHeaderLabels(["峰值编号", "Prominence", "Position Label"])
+        self.table.setColumnCount(4)
+        self.table.setHorizontalHeaderLabels(["峰值编号", "Prominence", "宽度 (ms)", "Position Label"])
         
         # 设置列宽
         self.table.setColumnWidth(0, 100)
-        self.table.setColumnWidth(1, 150)
-        self.table.setColumnWidth(2, 200)
+        self.table.setColumnWidth(1, 120)
+        self.table.setColumnWidth(2, 100)
+        self.table.setColumnWidth(3, 200)
         
         # 填充数据
         self.table.setRowCount(len(peaks_data))
@@ -2835,10 +2971,15 @@ class PositionLabelDialog(QDialog):
             prominence_item.setFlags(Qt.ItemIsEnabled)
             self.table.setItem(i, 1, prominence_item)
             
+            # 宽度 (μs)
+            width_item = QTableWidgetItem(f"{peak_data['peak_width_us']:.2f}")
+            width_item.setFlags(Qt.ItemIsEnabled)
+            self.table.setItem(i, 2, width_item)
+            
             # Position Label (可编辑)
             label_item = QTableWidgetItem("")
             label_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsEditable)
-            self.table.setItem(i, 2, label_item)
+            self.table.setItem(i, 3, label_item)
         
         layout.addWidget(self.table)
         
@@ -2858,7 +2999,7 @@ class PositionLabelDialog(QDialog):
         """获取所有position labels"""
         labels = []
         for i in range(self.table.rowCount()):
-            label_item = self.table.item(i, 2)
+            label_item = self.table.item(i, 3)  # Position Label现在是第4列（索引3）
             labels.append(label_item.text() if label_item else "")
         return labels
 
