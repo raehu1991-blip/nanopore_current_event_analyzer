@@ -131,6 +131,9 @@ class SingleEventAnalyzer(QWidget):
         # Make the table read-only except for position label column
         self.peak_table_widget.setEditTriggers(QAbstractItemView.NoEditTriggers)
         
+        # Connect cell click event for position label column
+        self.peak_table_widget.cellClicked.connect(self.on_peak_table_cell_clicked)
+        
         review_layout.addWidget(self.peak_table_widget)
         
         # Select all/none buttons
@@ -185,6 +188,9 @@ class SingleEventAnalyzer(QWidget):
         self.plot_widget.setLabel('bottom', '时间 (s)', 's')
         self.plot_widget.showGrid(True, True)
         self.plot_widget.setMouseEnabled(x=True, y=True)
+        
+        # Set white background
+        self.plot_widget.setBackground('w')
         
         # Add crosshair
         self.crosshair_v = pg.InfiniteLine(angle=90, movable=False, pen='y')
@@ -302,6 +308,7 @@ class SingleEventAnalyzer(QWidget):
         bg_layout.addWidget(QLabel("背景颜色:"))
         self.bg_color_combo = QComboBox()
         self.bg_color_combo.addItems(["白色", "黑色", "浅灰色", "深灰色"])
+        self.bg_color_combo.setCurrentText("白色")  # 设置默认选择白色
         self.bg_color_combo.currentTextChanged.connect(self.change_background_color)
         bg_layout.addWidget(self.bg_color_combo)
         param_layout.addLayout(bg_layout)
@@ -1078,6 +1085,14 @@ class SingleEventAnalyzer(QWidget):
                 status_item = self.peak_table_widget.item(i, 2)  # 审核状态列
                 if status_item:
                     status_item.setText("待审核")
+    
+    def on_peak_table_cell_clicked(self, row, column):
+        """处理峰值表格单元格点击事件"""
+        # 如果点击的是Position Label列（第3列，索引为3）
+        if column == 3:
+            # 不进行任何自动重命名操作
+            # 用户需要手动编辑position label
+            pass
     
     def get_selected_peaks(self):
         """获取标记为保留的峰值数据"""
