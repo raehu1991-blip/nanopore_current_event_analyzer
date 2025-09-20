@@ -1,0 +1,103 @@
+# Current Event Analyzer - Git忽略文件
+
+# Python相关
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyQt5相关
+*.ui~
+*.qmlc
+*.jsc
+
+# 数据文件
+*.tdms
+*.tdms_index
+*.npz
+
+# 测试和覆盖率
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+*.py,cover
+
+# 虚拟环境
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE相关
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# 系统文件
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# 日志文件
+*.log
+
+# 临时文件
+*.tmp
+*.temp
+test_run.py
+simple_test.py
+
+# 用户数据
+data/*.csv
+data/*.tdms
+data/*.npz
+examples/output/
+results/
+
+# 配置文件（包含敏感信息）
+config.ini
+settings.json
+
+# 编译文件
+*.pyc
+*.pyo
+*.pyd
+
+# 文档生成
+docs/_build/
+site/
+

@@ -1,0 +1,2 @@
+Threshold/nA	Minimum duration/s	Baseline patch length	Correction method	Total points	Total time/s	More than area	Less than area	Points before/after	Event begin and end/nA	
+-0.100000	0.000300	125000.000000	2.000000	740675000.000000	2962.700000	1000.000000	100.000000	300.000000	-0.050000
