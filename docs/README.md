@@ -58,7 +58,7 @@ python run.py
 7. 点击"Analyze"进行峰值分析
 8. 在"峰值审核"中选择要保存的峰值
 9. 点击"Export Selected to CSV"导出选中的峰值数据
-10. CSV包含：file_name, peak_number, total_time, peak_t, peak_i, peak_start_i, peak_start_t, peak_amplitude, peak_rel_t, peak_rel_i
+10. CSV包含详细的峰值分析数据（见下方"CSV导出字段详解"）
 
 ### 模块2：多文件数据可视化 (Multi-file Data Visualization)
 
@@ -131,9 +131,7 @@ python run.py
 
 ### 数据格式
 - 输入：TDMS文件（250kHz采样）、NPZ文件、CSV文件
-- 输出：标准化CSV格式，包含完整的峰值分析数据
-  - peak_rel_t = (peak_t - event_start_t) / total_time（峰值相对时间比例）
-  - peak_rel_i = -peak_amplitude / peak_start_i（峰值相对电流比例）
+- 输出：标准化CSV格式，包含完整的峰值分析数据（详见"CSV导出字段详解"）
 
 ## 技术栈
 
@@ -183,6 +181,71 @@ python run.py
 - **参数**：
   - 模型路径：可选提供预训练的scikit-learn模型文件路径
   - 默认使用随机森林分类器作为后备方案
+
+## CSV导出字段详解
+
+分析结果导出的CSV文件包含以下字段，提供完整的峰值分析数据：
+
+### 基本信息字段
+| 字段名 | 类型 | 含义 | 示例值 |
+|--------|------|------|--------|
+| `file_name` | string | 源文件名 | "data_001.tdms" |
+| `peak_number` | integer | 峰值编号（从1开始） | 1, 2, 3... |
+
+### 时间相关字段
+| 字段名 | 类型 | 含义 | 单位 | 计算方式 |
+|--------|------|------|------|----------|
+| `duration` | float | 峰值所在事件的持续时间 | 秒 | 事件结束时间 - 事件开始时间 |
+| `peak_t` | float | 峰值相对于事件起始点的时间 | 秒 | (峰值索引 - 事件起始索引) × 采样间隔 |
+| `peak_start_t` | float | 峰值起始点的绝对时间 | 秒 | 从峰值向前寻找电流开始下降的时间点 |
+| `peak_rel_t` | float | 峰值在事件中的相对时间位置 | 比例 [0-1] | peak_t / duration |
+
+### 电流相关字段
+| 字段名 | 类型 | 含义 | 单位 | 说明 |
+|--------|------|------|------|------|
+| `peak_i` | float | 峰值点的电流值 | nA | 峰值处的实际电流测量值 |
+| `peak_start_i` | float | 峰值起始点的电流值 | nA | 峰值开始下降前的基线电流 |
+| `peak_amplitude` | float | 峰值显著性 (Prominence) | nA | SciPy计算的峰值显著性，表示峰值的突出程度 |
+| `peak_rel_i` | float | 峰值相对电流强度 | 比例 | -peak_amplitude / peak_start_i |
+
+### 峰值形状字段
+| 字段名 | 类型 | 含义 | 单位 | 说明 |
+|--------|------|------|------|------|
+| `peak_width_us` | float | 峰值宽度（半高全宽FWHM） | 微秒 | 峰值在半高度处的宽度 |
+| `fwhm_left_time` | float | 半高宽左边界时间 | 秒 | FWHM左侧交点的时间 |
+| `fwhm_right_time` | float | 半高宽右边界时间 | 秒 | FWHM右侧交点的时间 |
+| `fwhm_height` | float | 半高宽对应的电流高度 | nA | 计算FWHM时使用的电流高度值 |
+
+### 基点字段
+| 字段名 | 类型 | 含义 | 单位 | 说明 |
+|--------|------|------|------|------|
+| `left_base_t` | float | 左基点时间 | 秒 | SciPy检测的峰值左侧基础点时间 |
+| `left_base_i` | float | 左基点电流 | nA | 左基点处的电流值 |
+| `right_base_t` | float | 右基点时间 | 秒 | SciPy检测的峰值右侧基础点时间 |
+| `right_base_i` | float | 右基点电流 | nA | 右基点处的电流值 |
+
+### 可选字段
+| 字段名 | 类型 | 含义 | 出现条件 |
+|--------|------|------|----------|
+| `position_label` | string | 用户标注的位置标签 | 仅在手动编辑过标签时出现 |
+
+### 重要说明
+
+1. **时间计算**：
+   - `peak_t` 现在是相对时间，从事件开始计算（之前版本是绝对时间）
+   - `duration` 是单个事件的持续时间（之前的`total_time`是所有事件总和）
+
+2. **电流单位**：
+   - 所有电流值均以纳安(nA)为单位
+   - BIN文件的电流会自动从安培转换为纳安
+
+3. **阈值逻辑**：
+   - 当前使用绝对阈值（用户直接设定阈值数值）
+   - 事件检测：电流 < 阈值的连续区间
+
+4. **基点含义**：
+   - 左右基点由SciPy的find_peaks算法自动确定
+   - 用于定义峰值的基础边界和计算prominence
 
 ## 安装可选依赖
 ```bash

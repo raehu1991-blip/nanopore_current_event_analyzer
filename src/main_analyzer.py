@@ -242,10 +242,10 @@ class SingleEventAnalyzer(QWidget):
         
         # Threshold setting
         thresh_layout = QHBoxLayout()
-        thresh_layout.addWidget(QLabel("阈值 (相对于基线):"))
+        thresh_layout.addWidget(QLabel("阈值 (绝对值):"))
         self.threshold_input = QDoubleSpinBox()
-        self.threshold_input.setRange(0.0, 100.0)  # 正值范围
-        self.threshold_input.setValue(0.1)  # 默认相对阈值
+        self.threshold_input.setRange(-100.0, 100.0)  # 绝对值范围
+        self.threshold_input.setValue(0.1)  # 默认绝对阈值
         self.threshold_input.setSingleStep(0.01)
         self.threshold_input.setDecimals(3)
         thresh_layout.addWidget(self.threshold_input)
@@ -874,10 +874,9 @@ class SingleEventAnalyzer(QWidget):
         # Plot the current data
         self.plot_widget.plot(self.time_data, self.current_data, pen='b', name='电流')
         
-        # Add threshold line (actual threshold = baseline - relative threshold)
-        baseline = self.calculate_baseline()
-        relative_threshold = self.threshold_input.value()
-        actual_threshold = baseline - relative_threshold
+        # Add threshold line (using absolute threshold)
+        absolute_threshold = self.threshold_input.value()
+        actual_threshold = absolute_threshold
         
         # Get selected algorithm and parameters
         algorithm = self.algorithm_combo.currentText()
@@ -967,9 +966,9 @@ class SingleEventAnalyzer(QWidget):
         # 计算基线值（前200个点的平均值）
         baseline = self.calculate_baseline()
         
-        # 用户输入的是相对阈值（正值），实际阈值 = 基线 - 相对阈值
-        relative_threshold = self.threshold_input.value()
-        actual_threshold = baseline - relative_threshold
+        # 用户输入的是绝对阈值，直接使用
+        absolute_threshold = self.threshold_input.value()
+        actual_threshold = absolute_threshold
         
         prominence = self.prominence_input.value()
         
@@ -1149,20 +1148,49 @@ class SingleEventAnalyzer(QWidget):
             # 如果没找到对应的segment，返回第一个segment的开始时间或0
             return event_segments[0]['start_time'] if event_segments else 0
         
+        # Function to find event duration for each peak
+        def find_peak_event_duration(peak_idx, event_segments):
+            """为每个峰值找到对应的事件持续时间"""
+            for segment in event_segments:
+                if segment['start_idx'] <= peak_idx <= segment['end_idx']:
+                    return segment['duration']
+            # 如果没找到对应的segment，返回0
+            return 0
+        
+        # Function to calculate peak relative time within event
+        def calculate_peak_relative_time(peak_idx, event_segments):
+            """计算峰值相对于事件起始点的时间"""
+            for segment in event_segments:
+                if segment['start_idx'] <= peak_idx <= segment['end_idx']:
+                    # 计算相对索引差
+                    relative_idx = peak_idx - segment['start_idx']
+                    # 转换为时间差（假设等间隔采样）
+                    if len(self.time_data) > 1:
+                        sampling_interval = self.time_data[1] - self.time_data[0]
+                        return relative_idx * sampling_interval
+                    else:
+                        return 0.0
+            # 如果没找到对应的segment，返回0
+            return 0.0
+        
         self.peaks_data = []
         for i in range(len(peaks)):
-            # Find the event start time for this peak
+            # Find the event start time and duration for this peak
             peak_event_start_time = find_peak_event_start_time(peaks[i], event_segments)
+            peak_event_duration = find_peak_event_duration(peaks[i], event_segments)
+            
+            # Calculate peak time relative to event start
+            peak_relative_time = calculate_peak_relative_time(peaks[i], event_segments)
             
             # Calculate relative parameters
-            peak_rel_t = (peak_times[i] - peak_event_start_time) / total_time if total_time > 0 else 0
+            peak_rel_t = peak_relative_time / peak_event_duration if peak_event_duration > 0 else 0
             peak_rel_i = -peak_amplitudes[i] / peak_start_currents[i] if peak_start_currents[i] != 0 else 0
             
             self.peaks_data.append({
                 'file_name': current_file,
                 'peak_number': i + 1,
-                'total_time': total_time,
-                'peak_t': peak_times[i],
+                'duration': peak_event_duration,
+                'peak_t': peak_relative_time,
                 'peak_i': peak_currents[i],
                 'peak_start_i': peak_start_currents[i],
                 'peak_start_t': peak_start_times[i],
@@ -1394,7 +1422,7 @@ class SingleEventAnalyzer(QWidget):
         file_exists = os.path.exists(csv_path)
         
         # 定义完整的字段名列表（包含所有FWHM相关字段）
-        fieldnames = ['file_name', 'peak_number', 'total_time', 'peak_t', 'peak_i', 
+        fieldnames = ['file_name', 'peak_number', 'duration', 'peak_t', 'peak_i', 
                      'peak_start_i', 'peak_start_t', 'peak_amplitude', 'peak_width_us', 
                      'fwhm_left_time', 'fwhm_right_time', 'fwhm_height', 'peak_rel_t', 'peak_rel_i',
                      'left_base_t', 'left_base_i', 'right_base_t', 'right_base_i']
