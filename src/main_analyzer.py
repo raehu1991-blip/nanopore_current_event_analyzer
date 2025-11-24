@@ -273,6 +273,17 @@ class SingleEventAnalyzer(QWidget):
         wlen_layout.addWidget(self.wlen_input)
         param_layout.addLayout(wlen_layout)
         
+        # Distance parameter for peak detection
+        distance_layout = QHBoxLayout()
+        distance_layout.addWidget(QLabel("Distance:"))
+        self.distance_input = QSpinBox()
+        self.distance_input.setRange(1, 1000)
+        self.distance_input.setValue(10)  # 默认值
+        self.distance_input.setSingleStep(1)
+        self.distance_input.setToolTip("两个峰值之间的最小间隔（采样点数）")
+        distance_layout.addWidget(self.distance_input)
+        param_layout.addLayout(distance_layout)
+        
         # Wavelet parameters (initially hidden)
         wavelet_layout = QHBoxLayout()
         self.wavelet_type_label = QLabel("小波类型:")
@@ -906,7 +917,8 @@ class SingleEventAnalyzer(QWidget):
                 if len(peaks) > 0:
                     prominence = self.prominence_input.value()
                     wlen = self.wlen_input.value()
-                    peaks, properties = find_peaks(-self.current_data, prominence=prominence, wlen=wlen, distance=10)
+                    distance = self.distance_input.value()
+                    peaks, properties = find_peaks(-self.current_data, prominence=prominence, wlen=wlen, distance=distance)
                     # Filter to only include peaks found by wavelet method
                     wavelet_peaks_set = set(peaks)
                     peaks = [p for p in peaks if p in wavelet_peaks_set]
@@ -930,7 +942,8 @@ class SingleEventAnalyzer(QWidget):
                 if len(peaks) > 0:
                     prominence = self.prominence_input.value()
                     wlen = self.wlen_input.value()
-                    peaks, properties = find_peaks(-self.current_data, prominence=prominence, wlen=wlen, distance=10)
+                    distance = self.distance_input.value()
+                    peaks, properties = find_peaks(-self.current_data, prominence=prominence, wlen=wlen, distance=distance)
                     # Filter to only include peaks found by ML method
                     ml_peaks_set = set(peaks)
                     peaks = [p for p in peaks if p in ml_peaks_set]
@@ -946,10 +959,11 @@ class SingleEventAnalyzer(QWidget):
                 # Default Scipy find_peaks method
                 prominence = self.prominence_input.value()
                 wlen = self.wlen_input.value()
+                distance = self.distance_input.value()
                 peaks, properties = find_peaks(-self.current_data,
                                              prominence=prominence,
                                              wlen=wlen,
-                                             distance=10)
+                                             distance=distance)
         except ImportError as e:
             QMessageBox.warning(self, "依赖错误", f"{str(e)}\n请安装所需依赖。")
             return
@@ -986,12 +1000,13 @@ class SingleEventAnalyzer(QWidget):
         # Use find_peaks with prominence and width for better peak control
         # prominence控制峰的显著性，width计算半高宽
         wlen = self.wlen_input.value()
+        distance = self.distance_input.value()
         peaks, properties = find_peaks(-self.current_data, 
                                      prominence=prominence,
                                      width=1,  # 最小宽度（采样点数）
                                      rel_height=0.5,  # 半高宽
                                      wlen=wlen,
-                                     distance=10)
+                                     distance=distance)
         
         # Filter peaks to only include those below threshold and save corresponding properties
         threshold_peaks = []
